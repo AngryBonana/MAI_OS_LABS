@@ -12,15 +12,15 @@
 
 Для сборки используется gcc-14 и Makefile
 
-'''
+```
 make  
 ./client <имя файла>  
-'''
+```
 
 Можно скомпилировать код вручную
 
-'''
+```
 gcc-14 client.c -o client
 gcc-14 server.c -o server
 ./client <имя файла>  
-'''
+```

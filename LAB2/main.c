@@ -1,10 +1,17 @@
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include "include/readfile.h"
+#include <time.h>
+#include "include/batcher_sort.h"
 
 
+int max_threads;
+int active_threads = 1;
+pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 
 int main (int argc, char *argv[])
 {
@@ -29,7 +36,7 @@ int main (int argc, char *argv[])
         write(STDERR_FILENO, msg, sizeof(msg) - 1);
         exit(EXIT_FAILURE);
     }
-    int32_t output_fd = open(argv[3], O_WRONLY);
+    int32_t output_fd = open(argv[3], O_WRONLY | O_CREAT);
     if (output_fd == -1)
     {
         const char msg[] = "ERROR: Invalid filename\nCan't open output file\n";
@@ -93,7 +100,24 @@ int main (int argc, char *argv[])
     }
     free(file_data);
 
-    // Здесь будет замер и сортировка
+    max_threads = num_of_threads;
+    
+    clock_t start_tick, end_tick;
+    double elapsed_time;
+    start_tick = clock();
+ 
+    
+    batcher_sort(nums, nums_size, 1);
+
+    end_tick = clock();
+ 
+    elapsed_time = (double)(end_tick - start_tick) / CLOCKS_PER_SEC * 1000;
+
+    {
+        char msg[50];
+        snprintf(msg, 50, "Time: %.3f ms\nMax threads: %d\n", elapsed_time, max_threads);
+        write(STDOUT_FILENO, msg, sizeof(msg) - 1);
+    }
 
     error_status = write_nums_to_file(output_fd, nums, nums_size);
     if (error_status == 1)

@@ -1,126 +1,160 @@
 #include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
+#include <unistd.h>
 #include <pthread.h>
-#include "../include/batcher_sort.h"
-
+#include <stdlib.h>
 
 
 typedef struct {
-    int32_t *arr;
-    int32_t n;
-    int32_t ascending;
-} task_t;
+    int32_t *a;
+    uint32_t start;
+    uint32_t end;
+    uint32_t j;
+    uint32_t k;
+} thread_task_t;
 
-void *sort_worker(void *arg) {
-    task_t *t = (task_t *)arg;
-    batcher_sort(t->arr, t->n, t->ascending);
-    free(t);
 
-    pthread_mutex_lock(&mtx);
-    active_threads--;
-    pthread_mutex_unlock(&mtx);
+static inline void compare_and_swap(int32_t *a, uint32_t i, uint32_t j, int dir) 
+{
+    if (dir == (a[i] > a[j])) 
+    {
+        int32_t tmp = a[i];
+        a[i] = a[j];
+        a[j] = tmp;
+    }
+}
 
+
+static void *worker_thread(void *arg) 
+{
+    thread_task_t *task = (thread_task_t *)arg;
+    uint32_t *a = (uint32_t *)task->a; 
+    uint32_t j = task->j;
+    uint32_t k = task->k;
+
+    for (uint32_t i = task->start; i < task->end; i++) 
+    {
+        uint32_t ij = i ^ j;
+        if (ij > i) 
+        {
+            int dir = ((i & k) == 0) ? 1 : 0;
+            compare_and_swap(task->a, i, ij, dir);
+        }
+    }
     return NULL;
 }
 
 
-void merge(int32_t *arr, int32_t n, int32_t ascending) {
-    if (n <= 1) return;
+static void apply_layer(int32_t *a, uint32_t n, uint32_t k, uint32_t j, uint32_t max_threads) 
+{
 
-    int32_t mid = n / 2;
-    int32_t *left = malloc(mid * sizeof(int32_t));
-    int32_t *right = malloc((n - mid) * sizeof(int32_t));
+    const uint32_t MIN_WORK_PER_THREAD = 131032;
 
-    memcpy(left, arr, mid * sizeof(int32_t));
-    memcpy(right, arr + mid, (n - mid) * sizeof(int32_t));
-
-    int32_t i = 0, j = 0, k = 0;
-
-    while (i < mid && j < n - mid) {
-        if ((ascending && left[i] <= right[j]) ||
-            (!ascending && left[i] >= right[j])) {
-            arr[k++] = left[i++];
-        } else {
-            arr[k++] = right[j++];
-        }
-    }
-
-    while (i < mid) arr[k++] = left[i++];
-    while (j < n - mid) arr[k++] = right[j++];
-
-    free(left);
-    free(right);
-}
-
-void batcher_sort(int32_t *arr, int32_t n, int32_t ascending) {
-    if (n <= 1) 
+    if (n < MIN_WORK_PER_THREAD * max_threads || max_threads <= 1) 
     {
+
+        for (uint32_t i = 0; i < n; i++) 
+        {
+            uint32_t ij = i ^ j;
+            if (ij > i) 
+            {
+                int dir = ((i & k) == 0) ? 1 : 0;
+                compare_and_swap(a, i, ij, dir);
+            }
+        }
         return;
     }
-    int32_t mid = n / 2;
-    pthread_t t1 = 0, t2 = 0;
-    int32_t t1_created = 0, t2_created = 0;
 
+    uint32_t num_threads = (n + MIN_WORK_PER_THREAD - 1) / MIN_WORK_PER_THREAD;
+    if (num_threads > max_threads) num_threads = max_threads;
 
-    pthread_mutex_lock(&mtx);
-    if (active_threads < max_threads) {
-        active_threads++;
-        pthread_mutex_unlock(&mtx);
+    pthread_t *threads = calloc(num_threads, sizeof(pthread_t));
+    thread_task_t *tasks = calloc(num_threads, sizeof(thread_task_t));
 
-        task_t *args = malloc(sizeof(task_t));
-        args->arr = arr;
-        args->n = mid;
-        args->ascending = ascending;
-
-        if (pthread_create(&t1, NULL, sort_worker, args) == 0) {
-            t1_created = 1;
-        } else {
-            pthread_mutex_lock(&mtx);
-            active_threads--;
-            pthread_mutex_unlock(&mtx);
-            free(args);
-            batcher_sort(arr, mid, ascending);
-        }
-    } else {
-        pthread_mutex_unlock(&mtx);
-        batcher_sort(arr, mid, ascending);
-    }
-
-
-    pthread_mutex_lock(&mtx);
-    if (active_threads < max_threads) {
-        active_threads++;
-        pthread_mutex_unlock(&mtx);
-
-        task_t *args = malloc(sizeof(task_t));
-        args->arr = arr + mid;
-        args->n = n - mid;
-        args->ascending = ascending;
-
-        if (pthread_create(&t2, NULL, sort_worker, args) == 0) {
-            t2_created = 1;
-        } else {
-            pthread_mutex_lock(&mtx);
-            active_threads--;
-            pthread_mutex_unlock(&mtx);
-            free(args);
-            batcher_sort(arr + mid, n - mid, ascending);
-        }
-    } else {
-        pthread_mutex_unlock(&mtx);
-        batcher_sort(arr + mid, n - mid, ascending);
-    }
-
-    
-    if (t1_created)
+    if (!threads || !tasks) 
     {
-        pthread_join(t1, NULL);
+        
+        free(threads);
+        free(tasks);
+        for (uint32_t i = 0; i < n; i++) 
+        {
+            uint32_t ij = i ^ j;
+            if (ij > i) 
+            {
+                int dir = ((i & k) == 0) ? 1 : 0;
+                compare_and_swap(a, i, ij, dir);
+            }
+        }
+        return;
     }
-    if (t2_created) 
+
+    uint32_t chunk = (n + num_threads - 1) / num_threads;
+
+    int32_t ok = 1;
+    for (uint32_t t = 0; t < num_threads; t++) 
     {
-        pthread_join(t2, NULL);
+        uint32_t start = t * chunk;
+        uint32_t end = (t == num_threads - 1) ? n : start + chunk;
+        if (start >= end) break;
+
+        tasks[t] = (thread_task_t)
+        {
+            .a = a,
+            .start = start,
+            .end = end,
+            .j = j,
+            .k = k
+        };
+
+        if (pthread_create(&threads[t], NULL, worker_thread, &tasks[t]) != 0) 
+        {
+            ok = 0;
+            break;
+        }
     }
-    
-    merge(arr, n, ascending);
+
+    if (ok) 
+    {
+        for (uint32_t t = 0; t < num_threads; t++) 
+        {
+            pthread_join(threads[t], NULL);
+        }
+        free(threads);
+        free(tasks);
+        return;
+    }
+
+    free(threads);
+    free(tasks);
+    for (uint32_t i = 0; i < n; i++) 
+    {
+        uint32_t ij = i ^ j;
+        if (ij > i) 
+        {
+            int dir = ((i & k) == 0) ? 1 : 0;
+            compare_and_swap(a, i, ij, dir);
+        }
+    }
+}
+
+
+void batcher_sort(int32_t *a, uint32_t n, uint32_t num_threads)
+{
+    if (n <= 1) return;
+
+    if ((n & (n - 1)) != 0) 
+    {
+        const char msg[] = "Error: n must be a power of two (1, 2, 4, 8, ...)\n";
+        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        return;
+    }
+
+    if (num_threads == 0) num_threads = 1;
+
+    for (uint32_t k = 2; k <= n; k <<= 1) 
+    {          
+        for (uint32_t j = k >> 1; j > 0; j >>= 1) 
+        { 
+            apply_layer(a, n, k, j, num_threads);
+        }
+    }
 }

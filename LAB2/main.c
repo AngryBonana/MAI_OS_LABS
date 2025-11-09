@@ -5,13 +5,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "include/readfile.h"
-#include <time.h>
 #include "include/batcher_sort.h"
+#include <time.h>
 
 
-int max_threads;
-int active_threads = 1;
-pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 
 int main (int argc, char *argv[])
 {
@@ -99,36 +96,24 @@ int main (int argc, char *argv[])
 
     }
     free(file_data);
+    file_data = NULL;
 
-    max_threads = num_of_threads;
-    
-    clock_t start_tick, end_tick;
-    double elapsed_time;
-    start_tick = clock();
- 
-    
-    batcher_sort(nums, nums_size, 1);
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
-    end_tick = clock();
- 
-    elapsed_time = (double)(end_tick - start_tick) / CLOCKS_PER_SEC * 1000;
+    batcher_sort(nums, nums_size, num_of_threads);
 
-    {
-        char msg[50];
-        snprintf(msg, 50, "Time: %.3f ms\nMax threads: %d\n", elapsed_time, max_threads);
-        write(STDOUT_FILENO, msg, sizeof(msg) - 1);
-    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
 
-    error_status = write_nums_to_file(output_fd, nums, nums_size);
-    if (error_status == 1)
-    {
-        const char msg[] = "ERROR: Descritor ERROR\nDescriptor can't write to output file\n";
-        write(STDERR_FILENO, msg, sizeof(msg) - 1);
-        free(nums);
-        nums = NULL;
-        exit(EXIT_FAILURE);
+    double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0
+                   + (end.tv_nsec - start.tv_nsec) / 1e6;
 
-    }
+
+    char buf[100] = {};
+    snprintf(buf, 100, "Потоков: %u\tВремя: %.3f мс\n", num_of_threads, elapsed_ms);
+    write(STDOUT_FILENO, buf, 100);
+
+    write_nums_to_file(output_fd, nums, nums_size);
     free(nums);
     nums = NULL;
 

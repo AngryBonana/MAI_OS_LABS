@@ -69,7 +69,7 @@ int32_t *convert_to_int (char *data, uint32_t *error_status, uint32_t *array_siz
         *error_status = 2;
         return NULL;
     }
-    uint32_t size = 100;
+    uint32_t size = 64;
     uint32_t counter = 0;
     int32_t *nums = (int32_t *)malloc(sizeof(int32_t) * size);
     if (nums == NULL)
@@ -102,6 +102,7 @@ int32_t *convert_to_int (char *data, uint32_t *error_status, uint32_t *array_siz
         }
         tmp = strtok(NULL, " \t\n");
     }
+    
 
     *array_size = counter;
     *error_status = 0;
